@@ -362,7 +362,7 @@ if st.button("Generate Professional Strategy", type="primary"):
     with st.spinner("🧠 Drafting Strategy..."):
         try:
             completion = ai_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system_role},
                     {"role": "user", "content": prompt},
@@ -466,7 +466,7 @@ if "generated_strategy" in st.session_state:
 
                     try:
                         response = ai_client.chat.completions.create(
-                            model="meta-llama/llama-4-maverick-17b-128e-instruct",
+                            model="meta-llama/llama-4-scout-17b-16e-instruct",
                             messages=[
                                 {
                                     "role": "user",
@@ -510,7 +510,7 @@ if "generated_strategy" in st.session_state:
 
                     try:
                         response = ai_client.chat.completions.create(
-                            model="meta-llama/llama-4-maverick-17b-128e-instruct",
+                            model="meta-llama/llama-4-scout-17b-16e-instruct",
                             messages=[
                                 {
                                     "role": "user",
