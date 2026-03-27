@@ -8,8 +8,15 @@ from sklearn.metrics.pairwise import cosine_similarity
 import streamlit.components.v1 as components
 import datetime
 import math
-import base64
 from secrets_loader import get_groq_api_key, get_mongo_connection_string
+from app_security import (
+    USER_FACING_ERROR,
+    consume_llm_slot,
+    image_bytes_to_data_url,
+    log_exception,
+    sanitize_user_query,
+    validate_image_bytes,
+)
 
 
 # --- PAGE SETUP ---
@@ -56,14 +63,11 @@ search_model = load_search_engine()
 available_topics = load_topics(client)
 
 if "topic_embeddings" not in st.session_state:
-    st.session_state.topic_embeddings = search_model.encode(available_topics)
+    st.session_state.topic_embeddings = search_model.encode(
+        available_topics if available_topics else ["empty"]
+    )
 
 # --- HELPER FUNCTIONS ---
-
-
-def encode_image(uploaded_file):
-    """Converts uploaded image to Base64 for the AI Vision model"""
-    return base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
 
 
 def check_relevance_with_ai(user_query, matched_topic):
@@ -98,8 +102,8 @@ def check_relevance_with_ai(user_query, matched_topic):
         # Check if the AI said YES
         is_relevant = content.strip().upper().startswith("YES")
         return is_relevant, content
-    except:
-        # If API fails, default to allowing it
+    except Exception as e:
+        log_exception("check_relevance_with_ai Groq call failed", e)
         return True, "AI Validation Failed (Defaulting to Allow)"
 
 
@@ -219,6 +223,8 @@ def calculate_viral_score(user_query, topic_confidence, niche_velocity):
 
 # --- THE ROUTER LOGIC ---
 def find_best_niche(user_query):
+    if not available_topics:
+        return "", 0.0
     # 1. Encode User Query
     query_embedding = search_model.encode([user_query])
 
@@ -254,9 +260,11 @@ with col2:
 
 if st.button("Generate Professional Strategy", type="primary"):
 
-    if not user_query:
-        st.warning("⚠️ Please describe your video idea first.")
+    safe_query, q_err = sanitize_user_query(user_query)
+    if q_err:
+        st.warning(f"⚠️ {q_err}")
         st.stop()
+    user_query = safe_query
 
     # Save context for persistence
     st.session_state.content_type_selection = content_type
@@ -267,6 +275,10 @@ if st.button("Generate Professional Strategy", type="primary"):
 
     # 2. VALIDATION
     if confidence > 20:
+        ok, rl_msg = consume_llm_slot(st.session_state)
+        if not ok:
+            st.warning(f"⚠️ {rl_msg}")
+            st.stop()
         with st.spinner(f"🤔 Validating match: '{best_topic}'..."):
             is_relevant, reason = check_relevance_with_ai(user_query, best_topic)
     else:
@@ -364,6 +376,10 @@ if st.button("Generate Professional Strategy", type="primary"):
 
     with st.spinner("🧠 Drafting Strategy..."):
         try:
+            ok, rl_msg = consume_llm_slot(st.session_state)
+            if not ok:
+                st.warning(f"⚠️ {rl_msg}")
+                st.stop()
             completion = ai_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -376,7 +392,8 @@ if st.button("Generate Professional Strategy", type="primary"):
             # Save strategy to session state
             st.session_state.generated_strategy = completion.choices[0].message.content
         except Exception as e:
-            st.error(f"AI Error: {e}")
+            log_exception("Strategy generation Groq call failed", e)
+            st.error(USER_FACING_ERROR)
 
 # --- DISPLAY RESULTS (PERSISTENT LAYER) ---
 # This block runs on every refresh if data exists in session_state
@@ -452,8 +469,13 @@ if "generated_strategy" in st.session_state:
 
             if uploaded_file and st.button("Roast My Thumbnail"):
                 with st.spinner("👀 Analyzing pixels..."):
-                    base64_image = encode_image(uploaded_file)
-                    vision_prompt = """
+                    raw_img = uploaded_file.getvalue()
+                    ok_img, img_err = validate_image_bytes(raw_img)
+                    if not ok_img:
+                        st.warning(f"⚠️ {img_err}")
+                    else:
+                        data_url = image_bytes_to_data_url(raw_img)
+                        vision_prompt = """
                     You are a harsh but helpful YouTube Thumbnail Critic. 
                     Analyze this image for: 
                     1. Text Legibility (Can it be read on mobile?)
@@ -467,28 +489,31 @@ if "generated_strategy" in st.session_state:
                     - **The Fix:** Detailed and specific instructions to improve CTR. Almost like you are guiding the user on how to create an unmissable thumbnail.
                     """
 
-                    try:
-                        response = ai_client.chat.completions.create(
-                            model="meta-llama/llama-4-scout-17b-16e-instruct",
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": vision_prompt},
+                        try:
+                            ok_rl, rl_msg = consume_llm_slot(st.session_state)
+                            if not ok_rl:
+                                st.warning(f"⚠️ {rl_msg}")
+                            else:
+                                response = ai_client.chat.completions.create(
+                                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                                    messages=[
                                         {
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": f"data:image/jpeg;base64,{base64_image}"
-                                            },
-                                        },
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": vision_prompt},
+                                                {
+                                                    "type": "image_url",
+                                                    "image_url": {"url": data_url},
+                                                },
+                                            ],
+                                        }
                                     ],
-                                }
-                            ],
-                        )
-                        st.success("Analysis Complete!")
-                        st.markdown(response.choices[0].message.content)
-                    except Exception as e:
-                        st.error(f"Vision API Error: {e}")
+                                )
+                                st.success("Analysis Complete!")
+                                st.markdown(response.choices[0].message.content)
+                        except Exception as e:
+                            log_exception("Thumbnail roast Groq vision call failed", e)
+                            st.error(USER_FACING_ERROR)
 
         elif eval_mode == "⚔️ A/B Battle":
             c1, c2 = st.columns(2)
@@ -499,9 +524,18 @@ if "generated_strategy" in st.session_state:
 
             if img_a and img_b and st.button("Start Battle"):
                 with st.spinner("⚔️ Simulating CTR Battle..."):
-                    b64_a = encode_image(img_a)
-                    b64_b = encode_image(img_b)
-                    battle_prompt = """
+                    raw_a = img_a.getvalue()
+                    raw_b = img_b.getvalue()
+                    ok_a, err_a = validate_image_bytes(raw_a)
+                    ok_b, err_b = validate_image_bytes(raw_b)
+                    if not ok_a:
+                        st.warning(f"⚠️ Image A: {err_a}")
+                    elif not ok_b:
+                        st.warning(f"⚠️ Image B: {err_b}")
+                    else:
+                        url_a = image_bytes_to_data_url(raw_a)
+                        url_b = image_bytes_to_data_url(raw_b)
+                        battle_prompt = """
                     Compare these two YouTube thumbnails. 
                     Which one will have a higher Click-Through Rate (CTR)? 
                     Explain why based on color, contrast, hook-factor, and curiosity gap. 
@@ -511,34 +545,34 @@ if "generated_strategy" in st.session_state:
                     - **Reasoning:** Why it won.
                     """
 
-                    try:
-                        response = ai_client.chat.completions.create(
-                            model="meta-llama/llama-4-scout-17b-16e-instruct",
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": battle_prompt},
+                        try:
+                            ok_rl, rl_msg = consume_llm_slot(st.session_state)
+                            if not ok_rl:
+                                st.warning(f"⚠️ {rl_msg}")
+                            else:
+                                response = ai_client.chat.completions.create(
+                                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                                    messages=[
                                         {
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": f"data:image/jpeg;base64,{b64_a}"
-                                            },
-                                        },
-                                        {
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": f"data:image/jpeg;base64,{b64_b}"
-                                            },
-                                        },
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": battle_prompt},
+                                                {
+                                                    "type": "image_url",
+                                                    "image_url": {"url": url_a},
+                                                },
+                                                {
+                                                    "type": "image_url",
+                                                    "image_url": {"url": url_b},
+                                                },
+                                            ],
+                                        }
                                     ],
-                                }
-                            ],
-                        )
-                        # st.balloons()
-                        st.markdown(response.choices[0].message.content)
-                    except Exception as e:
-                        st.error(f"Vision API Error: {e}")
+                                )
+                                st.markdown(response.choices[0].message.content)
+                        except Exception as e:
+                            log_exception("A/B battle Groq vision call failed", e)
+                            st.error(USER_FACING_ERROR)
 
 
 # ROW 3: The Map (Always visible for exploration)
