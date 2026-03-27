@@ -1,0 +1,24 @@
+# Core app & data
+streamlit>=1.28.0,<2
+pandas>=2.0.0,<3
+pymongo>=4.6.0,<5
+certifi>=2024.0.0
+openai>=1.0.0,<2
+sentence-transformers>=2.2.0,<4
+scikit-learn>=1.3.0,<2
+
+# Harvest
+google-api-python-client>=2.100.0,<3
+isodate>=0.6.0,<1
+
+# NLP / topics
+bertopic>=0.16.0,<1
+emoji>=2.10.0,<3
+
+# Optional viz scripts (visualize.py)
+matplotlib>=3.8.0,<4
+seaborn>=0.13.0,<1
+wordcloud>=1.9.0,<2
+
+# Optional: check_models.py (Gemini model listing)
+google-genai>=1.0.0,<2

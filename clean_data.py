@@ -2,11 +2,11 @@ import re
 import emoji
 from pymongo import MongoClient
 import certifi
-from credentials import MONGO_CONNECTION_STRING
+from secrets_loader import get_mongo_connection_string
 
 
 # --- CONNECT ---
-client = MongoClient(MONGO_CONNECTION_STRING, tlsCAFile=certifi.where())
+client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
 

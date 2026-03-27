@@ -1,0 +1,8 @@
+# Ignore the Virtual Environment folder (it's too big)
+venv/
+__pycache__/
+.DS_Store
+
+# SECURITY: Ignore the keys!
+credentials.py
+.streamlit/secrets.toml

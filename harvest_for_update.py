@@ -3,12 +3,12 @@ from pymongo import MongoClient
 import certifi
 import isodate  # <--- NEW: To parse duration
 from config import CATEGORY_MAP
-from credentials import YOUTUBE_API_KEY, MONGO_CONNECTION_STRING
+from secrets_loader import get_mongo_connection_string, get_youtube_api_key
 
 
 # --- SETUP ---
-youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-client = MongoClient(MONGO_CONNECTION_STRING, tlsCAFile=certifi.where())
+youtube = build("youtube", "v3", developerKey=get_youtube_api_key())
+client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
 

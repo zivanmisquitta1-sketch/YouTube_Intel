@@ -1,15 +1,17 @@
+from datetime import datetime, timezone
+
 from bertopic import BERTopic
 from pymongo import MongoClient
 import certifi
-import pandas as pd
-import os
-from credentials import MONGO_CONNECTION_STRING
+
+from secrets_loader import get_mongo_connection_string
 
 
 # --- CONNECT ---
-client = MongoClient(MONGO_CONNECTION_STRING, tlsCAFile=certifi.where())
+client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
+assets = db["app_assets"]
 
 
 def run_semantic_analysis():
@@ -40,6 +42,20 @@ def run_semantic_analysis():
     fig = topic_model.visualize_topics()
     fig.write_html("chart_topic_galaxy.html")
     print("     ✅ Saved: chart_topic_galaxy.html")
+
+    with open("chart_topic_galaxy.html", "r", encoding="utf-8") as f:
+        galaxy_html = f.read()
+    assets.update_one(
+        {"_id": "topic_galaxy"},
+        {
+            "$set": {
+                "html": galaxy_html,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    print("     ✅ Stored galaxy map HTML in MongoDB (app_assets.topic_galaxy)")
 
     # 5. WRITE BACK TO MONGODB (The "Enrichment" Step)
     print("\n💾 ENRICHING DATABASE WITH TOPIC IDs...")

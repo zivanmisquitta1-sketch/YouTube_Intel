@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 import datetime
 import math
 import base64
-from credentials import MONGO_CONNECTION_STRING, GROQ_API_KEY
+from secrets_loader import get_groq_api_key, get_mongo_connection_string
 
 
 # --- PAGE SETUP ---
@@ -19,8 +19,11 @@ st.set_page_config(page_title="YouTube Intel Engine", layout="wide", page_icon="
 # --- CACHED RESOURCES ---
 @st.cache_resource
 def init_connections():
-    client = MongoClient(MONGO_CONNECTION_STRING, tlsCAFile=certifi.where())
-    ai_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
+    client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
+    ai_client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=get_groq_api_key(),
+    )
     return client, ai_client
 
 
@@ -541,9 +544,22 @@ if "generated_strategy" in st.session_state:
 # ROW 3: The Map (Always visible for exploration)
 st.markdown("---")
 with st.expander("🌌 Explore the Galaxy Map (Visual Database)", expanded=False):
+    html_data = None
     try:
-        with open("chart_topic_galaxy.html", "r", encoding="utf-8") as f:
-            html_data = f.read()
+        doc = client["youtube_analytics"]["app_assets"].find_one(
+            {"_id": "topic_galaxy"}
+        )
+        if doc and doc.get("html"):
+            html_data = doc["html"]
+    except Exception:
+        pass
+    if not html_data:
+        try:
+            with open("chart_topic_galaxy.html", "r", encoding="utf-8") as f:
+                html_data = f.read()
+        except OSError:
+            pass
+    if html_data:
         components.html(html_data, height=600, scrolling=True)
-    except:
+    else:
         st.write("Map not generated yet.")
