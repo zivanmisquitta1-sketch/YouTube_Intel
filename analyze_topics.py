@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from bertopic import BERTopic
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 import certifi
 
 from secrets_loader import get_mongo_connection_string
@@ -12,6 +12,8 @@ client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
 assets = db["app_assets"]
+
+BATCH_SIZE = 500
 
 
 def run_semantic_analysis():
@@ -61,6 +63,8 @@ def run_semantic_analysis():
     print("\n💾 ENRICHING DATABASE WITH TOPIC IDs...")
 
     updates = 0
+    batch_ops: list = []
+
     # We zip the videos with their discovered topics to update them
     for i, video in enumerate(videos):
         topic_id = topics[i]
@@ -75,12 +79,25 @@ def run_semantic_analysis():
                 top_words = "_".join([word[0] for word in topic_info[:3]])
                 topic_label = f"{topic_id}_{top_words}"
 
-                collection.update_one(
-                    {"_id": video["_id"]},
-                    {"$set": {"topic_id": int(topic_id), "topic_label": topic_label}},
-                    upsert=True,
+                batch_ops.append(
+                    UpdateOne(
+                        {"_id": video["_id"]},
+                        {
+                            "$set": {
+                                "topic_id": int(topic_id),
+                                "topic_label": topic_label,
+                            }
+                        },
+                        upsert=True,
+                    )
                 )
                 updates += 1
+                if len(batch_ops) >= BATCH_SIZE:
+                    collection.bulk_write(batch_ops, ordered=False)
+                    batch_ops = []
+
+    if batch_ops:
+        collection.bulk_write(batch_ops, ordered=False)
 
     print(
         f"✅ DATABASE UPDATE COMPLETE. {updates} videos now have 'Semantic Intelligence'."

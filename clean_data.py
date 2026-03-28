@@ -1,6 +1,6 @@
 import re
 import emoji
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 import certifi
 from secrets_loader import get_mongo_connection_string
 
@@ -9,6 +9,8 @@ from secrets_loader import get_mongo_connection_string
 client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
+
+BATCH_SIZE = 500
 
 
 def clean_text(text):
@@ -52,6 +54,7 @@ def run_cleaning_protocol():
     videos = collection.find()
     total_videos = collection.count_documents({})
     processed = 0
+    batch_ops: list = []
 
     for video in videos:
         original_title = video.get("title", "")
@@ -59,14 +62,21 @@ def run_cleaning_protocol():
         # Run the cleaning
         cleaned_title = clean_text(original_title)
 
-        # Update the database with the NEW field
-        collection.update_one(
-            {"_id": video["_id"]}, {"$set": {"clean_title": cleaned_title}}, upsert=True
+        batch_ops.append(
+            UpdateOne(
+                {"_id": video["_id"]},
+                {"$set": {"clean_title": cleaned_title}},
+                upsert=True,
+            )
         )
-
         processed += 1
+        if len(batch_ops) >= BATCH_SIZE:
+            collection.bulk_write(batch_ops, ordered=False)
+            batch_ops = []
         if processed % 100 == 0:
             print(f"   > Cleaned {processed}/{total_videos} videos...")
+    if batch_ops:
+        collection.bulk_write(batch_ops, ordered=False)
 
     print(f"\n✨ SANITATION COMPLETE. {processed} videos updated.")
     print("   Sample Check:")

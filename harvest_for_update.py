@@ -1,5 +1,5 @@
 from googleapiclient.discovery import build
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 import certifi
 import isodate  # <--- NEW: To parse duration
 from config import CATEGORY_MAP
@@ -11,6 +11,17 @@ youtube = build("youtube", "v3", developerKey=get_youtube_api_key())
 client = MongoClient(get_mongo_connection_string(), tlsCAFile=certifi.where())
 db = client["youtube_analytics"]
 collection = db["videos"]
+
+# Batch MongoDB upserts to avoid one round-trip per video (slow on cross-region CI).
+BATCH_SIZE = 500
+
+
+def _flush_video_upserts(ops: list) -> tuple[int, int]:
+    """Run bulk_write and return (new_upserts, matched_updates)."""
+    if not ops:
+        return (0, 0)
+    result = collection.bulk_write(ops, ordered=False)
+    return (result.upserted_count, result.matched_count)
 
 
 def get_top_channels(category_id):
@@ -121,25 +132,31 @@ def run_harvest():
 
             new_count = 0
             upd_count = 0
+            batch_ops: list = []
 
             for video in videos:
                 video["category"] = cat_name
 
-                # THE SMART UPSERT
-                result = collection.update_one(
-                    {"video_id": video["video_id"]},
-                    {
-                        "$set": video,
-                        "$currentDate": {"last_updated": True},  # <--- STAMPS THE TIME
-                    },
-                    upsert=True,
+                batch_ops.append(
+                    UpdateOne(
+                        {"video_id": video["video_id"]},
+                        {
+                            "$set": video,
+                            "$currentDate": {"last_updated": True},
+                        },
+                        upsert=True,
+                    )
                 )
+                if len(batch_ops) >= BATCH_SIZE:
+                    n_ins, n_upd = _flush_video_upserts(batch_ops)
+                    new_count += n_ins
+                    upd_count += n_upd
+                    batch_ops = []
 
-                # Check if it was an Insert or an Update
-                if result.matched_count > 0:
-                    upd_count += 1
-                else:
-                    new_count += 1
+            if batch_ops:
+                n_ins, n_upd = _flush_video_upserts(batch_ops)
+                new_count += n_ins
+                upd_count += n_upd
 
             total_new += new_count
             total_updated += upd_count
